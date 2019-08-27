@@ -267,4 +267,5 @@ void loop()
 	readClock1PlayButton();
 	readClock2PlayButton();
 	readEncoder();
+	drawOLED();
 }
