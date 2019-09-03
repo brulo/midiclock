@@ -36,7 +36,7 @@
 #define BUTTON_BOUNCE_TIME_MS 5
 #define MIDI_BAUD_RATE 31250
 #define PPQ 24
-#define BEATS_PER_MEASURE 4
+#define NUM_CLOCK_OUTPUTS 2
 
 // Change these two numbers to the pins connected to your encoder.
 //   Best Performance: both pins have interrupt capability
@@ -53,30 +53,25 @@ Bounce m_playFromStartButtonBouncer = Bounce(PIN_PLAY_FROM_START_BUTTON,	BUTTON_
 Bounce m_clock1PlayButtonBouncer =	Bounce(PIN_CLOCK_1_PLAY_BUTTON,		BUTTON_BOUNCE_TIME_MS);
 Bounce m_clock2PlayButtonBouncer =	Bounce(PIN_CLOCK_2_PLAY_BUTTON,		BUTTON_BOUNCE_TIME_MS);
 
-bool m_lastMainPlayButtonState = LOW;
-bool m_lastPlayFromStartButtonState = LOW;
-
 long m_previousEncoderPosition = 0;
 long m_previousEncoderDivided = 0;
-
 double m_bpm = 132.0;
 volatile long m_currentPulseCount = 0;
 volatile long m_currentBeatCount = 0;
-
+bool m_lastMainPlayButtonState = LOW;
+bool m_lastPlayFromStartButtonState = LOW;
 bool m_isClockInitialized = false;
 bool m_isMainClockPlaying = false;
-
 int m_beatsPerBar = 4;
 int m_pulsesPerBar = PPQ * m_beatsPerBar;
 
-#define NUM_CLOCK_OUTPUTS 2
 HardwareSerial* m_clockSerials[NUM_CLOCK_OUTPUTS] = { &Serial1, &Serial3 };
 Bounce* m_clockPlayButtonBouncers[NUM_CLOCK_OUTPUTS] = { &m_clock1PlayButtonBouncer, &m_clock2PlayButtonBouncer };
 bool m_lastClockPlayButtonStates[NUM_CLOCK_OUTPUTS];
 bool m_shouldClockStartNextBar[NUM_CLOCK_OUTPUTS];
-const int m_clockPlayButtonLedPins[NUM_CLOCK_OUTPUTS] = { PIN_CLOCK_1_PLAY_LED, PIN_CLOCK_2_PLAY_LED };
-const int m_clockPlayButtonPins[NUM_CLOCK_OUTPUTS] = { PIN_CLOCK_1_PLAY_BUTTON, PIN_CLOCK_2_PLAY_BUTTON };
 bool m_isClockPlaying[NUM_CLOCK_OUTPUTS];
+const int k_clockPlayButtonLedPins[NUM_CLOCK_OUTPUTS] = { PIN_CLOCK_1_PLAY_LED, PIN_CLOCK_2_PLAY_LED };
+const int k_clockPlayButtonPins[NUM_CLOCK_OUTPUTS] = { PIN_CLOCK_1_PLAY_BUTTON, PIN_CLOCK_2_PLAY_BUTTON };
 
 
 void setup()
@@ -94,8 +89,8 @@ void setup()
 		m_lastClockPlayButtonStates[i] = LOW;
 		m_shouldClockStartNextBar[i] = false;
 		m_isClockPlaying[i] = false;
-		pinMode(m_clockPlayButtonLedPins[i], OUTPUT);
-		pinMode(m_clockPlayButtonPins[i], INPUT);
+		pinMode(k_clockPlayButtonLedPins[i], OUTPUT);
+		pinMode(k_clockPlayButtonPins[i], INPUT);
 	}
   
 	updateTimer();
@@ -147,7 +142,7 @@ void timerCallback()
 				m_shouldClockStartNextBar[i] = false;
 				m_isClockPlaying[i] = true;
 				m_clockSerials[i]->write(START_STATUS_BYTE);
-				digitalWrite(m_clockPlayButtonLedPins[i], HIGH);
+				digitalWrite(k_clockPlayButtonLedPins[i], HIGH);
 			}
 		}
 	}
@@ -160,7 +155,7 @@ void timerCallback()
 		{
 			if (m_shouldClockStartNextBar[i] && !m_isClockPlaying[i])
 			{
-				digitalWrite(m_clockPlayButtonLedPins[i], isLedOn);
+				digitalWrite(k_clockPlayButtonLedPins[i], isLedOn);
 			}
 		}
 	}
@@ -236,7 +231,7 @@ void readClockPlayButtons()
 				if (m_isClockPlaying[i])
 				{
 					m_isClockPlaying[i] = false;
-					digitalWrite(m_clockPlayButtonLedPins[i], LOW);
+					digitalWrite(k_clockPlayButtonLedPins[i], LOW);
 					m_clockSerials[i]->write(STOP_STATUS_BYTE);
 				}
 				else
@@ -281,7 +276,7 @@ void drawOLED()
 
 	// display current beat HUD
 	m_oled.setFontType(1);
-	switch(m_currentBeatCount % BEATS_PER_MEASURE)
+	switch(m_currentBeatCount % m_beatsPerBar)
 	{
 		case 0:
 		  m_oled.println("  0xxx");
