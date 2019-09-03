@@ -54,8 +54,6 @@ Bounce clock1PlayButtonBouncer =	Bounce(PIN_CLOCK_1_PLAY_BUTTON,		BUTTON_BOUNCE_
 Bounce clock2PlayButtonBouncer =	Bounce(PIN_CLOCK_2_PLAY_BUTTON,		BUTTON_BOUNCE_TIME_MS);
 
 bool lastMainPlayButtonState = LOW;
-bool lastClock1PlayButtonState = LOW;
-bool lastClock2PlayButtonState = LOW;
 bool lastPlayFromStartButtonState = LOW;
 
 long previousEncoderPosition = 0;
@@ -67,13 +65,18 @@ volatile long currentBeatCount = 0;
 
 bool isClockInitialized = false;
 bool isMainClockPlaying = false;
-bool isClock1Playing = false;
-bool isClock2Playing = false;
 
-bool shouldClock1StartNextBar = false;
-bool shouldClock2StartNextBar = false;
 int beatsPerBar = 4;
 int pulsesPerBar = PPQ * beatsPerBar;
+
+#define NUM_CLOCK_OUTPUTS 2
+HardwareSerial* m_clockSerials[NUM_CLOCK_OUTPUTS] = { &Serial1, &Serial3 };
+Bounce* m_clockPlayButtonBouncers[NUM_CLOCK_OUTPUTS] = { &clock1PlayButtonBouncer, &clock2PlayButtonBouncer };
+bool m_lastClockPlayButtonStates[NUM_CLOCK_OUTPUTS];
+bool m_shouldClockStartNextBar[NUM_CLOCK_OUTPUTS];
+const int m_clockPlayButtonLedPins[NUM_CLOCK_OUTPUTS] = { PIN_CLOCK_1_PLAY_LED, PIN_CLOCK_2_PLAY_LED };
+const int m_clockPlayButtonPins[NUM_CLOCK_OUTPUTS] = { PIN_CLOCK_1_PLAY_BUTTON, PIN_CLOCK_2_PLAY_BUTTON };
+bool m_isClockPlaying[NUM_CLOCK_OUTPUTS];
 
 
 void setup()
@@ -83,14 +86,17 @@ void setup()
 
 	pinMode(PIN_MAIN_PLAY_BUTTON,		INPUT);
 	pinMode(PIN_MAIN_PLAY_LED,			OUTPUT);
-	pinMode(PIN_CLOCK_1_PLAY_BUTTON,	INPUT);
-	pinMode(PIN_CLOCK_1_PLAY_LED,		OUTPUT);
-	pinMode(PIN_CLOCK_2_PLAY_BUTTON,	INPUT);
-	pinMode(PIN_CLOCK_2_PLAY_LED,		OUTPUT);
 	pinMode(PIN_PLAY_FROM_START_BUTTON,	INPUT);
 
-	Serial1.begin(MIDI_BAUD_RATE);
-	Serial3.begin(MIDI_BAUD_RATE);
+	for (int i = 0; i < NUM_CLOCK_OUTPUTS; i++)
+	{
+		m_clockSerials[i]->begin(MIDI_BAUD_RATE);
+		m_lastClockPlayButtonStates[i] = LOW;
+		m_shouldClockStartNextBar[i] = false;
+		m_isClockPlaying[i] = false;
+		pinMode(m_clockPlayButtonLedPins[i], OUTPUT);
+		pinMode(m_clockPlayButtonPins[i], INPUT);
+	}
   
 	updateTimer();
 	Timer1.stop();
@@ -124,36 +130,39 @@ void timerCallback()
 {
 	noInterrupts();
 
-	if(isClock1Playing) Serial1.write(CLOCK_STATUS_BYTE);
-	if(isClock2Playing) Serial3.write(CLOCK_STATUS_BYTE);
+	for (int i = 0; i < NUM_CLOCK_OUTPUTS; i++)
+	{
+		m_clockSerials[i]->write(CLOCK_STATUS_BYTE);
+	}
+
 	currentPulseCount++;
 	currentBeatCount = currentPulseCount / 24;
 
 	if (currentPulseCount % pulsesPerBar == 0)  // the start of a new bar
 	{
-		if (shouldClock1StartNextBar && !isClock1Playing)
+		for (int i = 0; i < NUM_CLOCK_OUTPUTS; i++)
 		{
-			shouldClock1StartNextBar = false;
-			isClock1Playing = true;
-			Serial1.write(START_STATUS_BYTE);
-			digitalWrite(PIN_CLOCK_1_PLAY_LED, HIGH);
-		}
-
-		if (shouldClock2StartNextBar && !isClock2Playing)
-		{
-			shouldClock2StartNextBar = false;
-			isClock2Playing = true;
-			Serial3.write(START_STATUS_BYTE);
-			digitalWrite(PIN_CLOCK_2_PLAY_LED, HIGH);
+			if (m_shouldClockStartNextBar[i] && !m_isClockPlaying[i])
+			{
+				m_shouldClockStartNextBar[i] = false;
+				m_isClockPlaying[i] = true;
+				m_clockSerials[i]->write(START_STATUS_BYTE);
+				digitalWrite(m_clockPlayButtonLedPins[i], HIGH);
+			}
 		}
 	}
 	else
 	{
+		//update clock play buttons that are waiting for next bar to start
 		const int ppqInThisBeat = currentPulseCount % PPQ;
 		bool isLedOn = ppqInThisBeat % (PPQ) == 0;
-		//update clock play buttons that are waiting for next bar to start
-		if (shouldClock1StartNextBar && !isClock1Playing) digitalWrite(PIN_CLOCK_1_PLAY_LED, isLedOn);
-		if (shouldClock2StartNextBar && !isClock2Playing) digitalWrite(PIN_CLOCK_2_PLAY_LED, isLedOn);
+		for (int i = 0; i < NUM_CLOCK_OUTPUTS; i++)
+		{
+			if (m_shouldClockStartNextBar[i] && !m_isClockPlaying[i])
+			{
+				digitalWrite(m_clockPlayButtonLedPins[i], isLedOn);
+			}
+		}
 	}
 
 	interrupts();
@@ -175,14 +184,21 @@ void readMainPlayButton()
 			if(isMainClockPlaying)
 			{
 				Timer1.start();
-				if(isClock1Playing) Serial1.write(START_STATUS_BYTE);
-				if(isClock2Playing) Serial3.write(START_STATUS_BYTE);
+				for (int i = 0; i < NUM_CLOCK_OUTPUTS; i++)
+				{
+					if (m_isClockPlaying[i])
+					{
+						m_clockSerials[i]->write(START_STATUS_BYTE);
+					}
+				}
 			}
 			else
 			{
 				Timer1.stop();
-				Serial1.write(STOP_STATUS_BYTE);
-				Serial3.write(STOP_STATUS_BYTE);
+				for (int i = 0; i < NUM_CLOCK_OUTPUTS; i++)
+				{
+					m_clockSerials[i]->write(STOP_STATUS_BYTE);
+				}
 			}
 		}
 	} 
@@ -206,49 +222,27 @@ void readPlayFromStartButton()
 	}
 }
 
-void readClock1PlayButton()
+void readClockPlayButtons()
 {
-	clock1PlayButtonBouncer.update();
-
-	if(clock1PlayButtonBouncer.read() != lastClock1PlayButtonState)
+	for(int i = 0; i < NUM_CLOCK_OUTPUTS; i++)
 	{
-		lastClock1PlayButtonState = !lastClock1PlayButtonState;
+		m_clockPlayButtonBouncers[i]->update();
 
-		if(lastClock1PlayButtonState == HIGH)
+		if (m_clockPlayButtonBouncers[i]->read() != m_lastClockPlayButtonStates[i])
 		{
-			if (isClock1Playing)
+			m_lastClockPlayButtonStates[i] = !m_lastClockPlayButtonStates[i];
+			if (m_lastClockPlayButtonStates[i] == HIGH)
 			{
-				isClock1Playing = false;
-				digitalWrite(PIN_CLOCK_1_PLAY_LED, false);
-				Serial1.write(STOP_STATUS_BYTE);
-			}
-			else
-			{
-				shouldClock1StartNextBar = !shouldClock1StartNextBar;
-			}
-		}
-	}
-}
-
-void readClock2PlayButton()
-{
-	clock2PlayButtonBouncer.update();
-
-	if(clock2PlayButtonBouncer.read() != lastClock2PlayButtonState)
-	{
-		lastClock2PlayButtonState = !lastClock2PlayButtonState;
-
-		if(lastClock2PlayButtonState == HIGH)
-		{
-			if (isClock2Playing)
-			{
-				isClock2Playing = false;
-				digitalWrite(PIN_CLOCK_2_PLAY_LED, false);
-				Serial3.write(STOP_STATUS_BYTE);
-			}
-			else
-			{
-				shouldClock2StartNextBar = !shouldClock2StartNextBar;
+				if (m_isClockPlaying[i])
+				{
+					m_isClockPlaying[i] = false;
+					digitalWrite(m_clockPlayButtonLedPins[i], LOW);
+					m_clockSerials[i]->write(STOP_STATUS_BYTE);
+				}
+				else
+				{
+					m_shouldClockStartNextBar[i] = !m_shouldClockStartNextBar[i];
+				}
 			}
 		}
 	}
@@ -261,7 +255,6 @@ void readEncoder()
 	if(newEncoderPosition != previousEncoderPosition)
 	{
 		previousEncoderPosition = newEncoderPosition;
-		//Serial.println(newEncoderPosition);
 
 		// between the detents in the knob, there are 4 encoder signals sent.
 		// i only want to adjust bpm once the knob is settled into a detent,
@@ -314,8 +307,7 @@ void loop()
 {
 	readMainPlayButton();
 	readPlayFromStartButton();
-	readClock1PlayButton();
-	readClock2PlayButton();
+	readClockPlayButtons();
 	readEncoder();
 	drawOLED();
 }
