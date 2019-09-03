@@ -272,7 +272,9 @@ void drawOLED()
 
 	// display bpm
 	m_oled.setFontType(2);
-	m_oled.println(m_bpm);
+	char buffer[8];
+	sprintf(buffer, "%.1f", m_bpm);
+	m_oled.println(buffer);
 
 	// display current beat HUD
 	m_oled.setFontType(1);
