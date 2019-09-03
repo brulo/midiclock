@@ -43,35 +43,35 @@
 //   Good Performance: only the first pin has interrupt capability
 //   Low Performance:  neither pin has interrupt capability
 //   ......avoid using pins with LEDs attached
-Encoder encoder(PIN_ENCODER_1, PIN_ENCODER_2);
+Encoder m_encoder(PIN_ENCODER_1, PIN_ENCODER_2);
 
 // SPI declaration
-MicroOLED oled(PIN_RESET, PIN_DC, PIN_CS);
+MicroOLED m_oled(PIN_RESET, PIN_DC, PIN_CS);
 
-Bounce mainPlayButtonBouncer =		Bounce(PIN_MAIN_PLAY_BUTTON,		BUTTON_BOUNCE_TIME_MS);
-Bounce playFromStartButtonBouncer = Bounce(PIN_PLAY_FROM_START_BUTTON,	BUTTON_BOUNCE_TIME_MS);
-Bounce clock1PlayButtonBouncer =	Bounce(PIN_CLOCK_1_PLAY_BUTTON,		BUTTON_BOUNCE_TIME_MS);
-Bounce clock2PlayButtonBouncer =	Bounce(PIN_CLOCK_2_PLAY_BUTTON,		BUTTON_BOUNCE_TIME_MS);
+Bounce m_mainPlayButtonBouncer =		Bounce(PIN_MAIN_PLAY_BUTTON,		BUTTON_BOUNCE_TIME_MS);
+Bounce m_playFromStartButtonBouncer = Bounce(PIN_PLAY_FROM_START_BUTTON,	BUTTON_BOUNCE_TIME_MS);
+Bounce m_clock1PlayButtonBouncer =	Bounce(PIN_CLOCK_1_PLAY_BUTTON,		BUTTON_BOUNCE_TIME_MS);
+Bounce m_clock2PlayButtonBouncer =	Bounce(PIN_CLOCK_2_PLAY_BUTTON,		BUTTON_BOUNCE_TIME_MS);
 
-bool lastMainPlayButtonState = LOW;
-bool lastPlayFromStartButtonState = LOW;
+bool m_lastMainPlayButtonState = LOW;
+bool m_lastPlayFromStartButtonState = LOW;
 
-long previousEncoderPosition = 0;
-long previousEncoderDivided = 0;
+long m_previousEncoderPosition = 0;
+long m_previousEncoderDivided = 0;
 
-double bpm = 132.0;
-volatile long currentPulseCount = 0;
-volatile long currentBeatCount = 0;
+double m_bpm = 132.0;
+volatile long m_currentPulseCount = 0;
+volatile long m_currentBeatCount = 0;
 
-bool isClockInitialized = false;
-bool isMainClockPlaying = false;
+bool m_isClockInitialized = false;
+bool m_isMainClockPlaying = false;
 
-int beatsPerBar = 4;
-int pulsesPerBar = PPQ * beatsPerBar;
+int m_beatsPerBar = 4;
+int m_pulsesPerBar = PPQ * m_beatsPerBar;
 
 #define NUM_CLOCK_OUTPUTS 2
 HardwareSerial* m_clockSerials[NUM_CLOCK_OUTPUTS] = { &Serial1, &Serial3 };
-Bounce* m_clockPlayButtonBouncers[NUM_CLOCK_OUTPUTS] = { &clock1PlayButtonBouncer, &clock2PlayButtonBouncer };
+Bounce* m_clockPlayButtonBouncers[NUM_CLOCK_OUTPUTS] = { &m_clock1PlayButtonBouncer, &m_clock2PlayButtonBouncer };
 bool m_lastClockPlayButtonStates[NUM_CLOCK_OUTPUTS];
 bool m_shouldClockStartNextBar[NUM_CLOCK_OUTPUTS];
 const int m_clockPlayButtonLedPins[NUM_CLOCK_OUTPUTS] = { PIN_CLOCK_1_PLAY_LED, PIN_CLOCK_2_PLAY_LED };
@@ -101,21 +101,21 @@ void setup()
 	updateTimer();
 	Timer1.stop();
 
-	oled.begin();		// Initialize the OLED
-	oled.clear(ALL);	// Clear the display's internal memory
+	m_oled.begin();		// Initialize the OLED
+	m_oled.clear(ALL);	// Clear the display's internal memory
 	//oled.display();	// Display what's in the buffer (splashscreen)
 	//delay(500);		// Delay 1000 ms
-	oled.clear(PAGE);	// Clear the buffer.
+	m_oled.clear(PAGE);	// Clear the buffer.
 }
 
 void updateTimer()
 {
-	double microsecondsPerBeat = 60000000.0 / bpm;
+	double microsecondsPerBeat = 60000000.0 / m_bpm;
 	double microsecondsPerPulse = (microsecondsPerBeat / (double)PPQ);
   
 	//Serial.println((long)microsecondsPerPulse);
   
-	if(isClockInitialized)
+	if(m_isClockInitialized)
 	{
 		Timer1.setPeriod(microsecondsPerPulse);
 	}
@@ -135,10 +135,10 @@ void timerCallback()
 		m_clockSerials[i]->write(CLOCK_STATUS_BYTE);
 	}
 
-	currentPulseCount++;
-	currentBeatCount = currentPulseCount / 24;
+	m_currentPulseCount++;
+	m_currentBeatCount = m_currentPulseCount / 24;
 
-	if (currentPulseCount % pulsesPerBar == 0)  // the start of a new bar
+	if (m_currentPulseCount % m_pulsesPerBar == 0)  // the start of a new bar
 	{
 		for (int i = 0; i < NUM_CLOCK_OUTPUTS; i++)
 		{
@@ -154,7 +154,7 @@ void timerCallback()
 	else
 	{
 		//update clock play buttons that are waiting for next bar to start
-		const int ppqInThisBeat = currentPulseCount % PPQ;
+		const int ppqInThisBeat = m_currentPulseCount % PPQ;
 		bool isLedOn = ppqInThisBeat % (PPQ) == 0;
 		for (int i = 0; i < NUM_CLOCK_OUTPUTS; i++)
 		{
@@ -170,18 +170,18 @@ void timerCallback()
 
 void readMainPlayButton()
 {
-	mainPlayButtonBouncer.update();
+	m_mainPlayButtonBouncer.update();
 
-	if(mainPlayButtonBouncer.read() != lastMainPlayButtonState)
+	if(m_mainPlayButtonBouncer.read() != m_lastMainPlayButtonState)
 	{
-		lastMainPlayButtonState = !lastMainPlayButtonState;
-		if(lastMainPlayButtonState == HIGH)
+		m_lastMainPlayButtonState = !m_lastMainPlayButtonState;
+		if(m_lastMainPlayButtonState == HIGH)
 		{
-			isMainClockPlaying = !isMainClockPlaying;
+			m_isMainClockPlaying = !m_isMainClockPlaying;
 	  
-			digitalWrite(PIN_MAIN_PLAY_LED, isMainClockPlaying);
+			digitalWrite(PIN_MAIN_PLAY_LED, m_isMainClockPlaying);
 
-			if(isMainClockPlaying)
+			if(m_isMainClockPlaying)
 			{
 				Timer1.start();
 				for (int i = 0; i < NUM_CLOCK_OUTPUTS; i++)
@@ -206,15 +206,15 @@ void readMainPlayButton()
 
 void readPlayFromStartButton()
 {
-	playFromStartButtonBouncer.update();
+	m_playFromStartButtonBouncer.update();
 
-	if(playFromStartButtonBouncer.read() != lastPlayFromStartButtonState)
+	if(m_playFromStartButtonBouncer.read() != m_lastPlayFromStartButtonState)
 	{
-		lastPlayFromStartButtonState = !lastPlayFromStartButtonState;
-		if(lastPlayFromStartButtonState == HIGH)
+		m_lastPlayFromStartButtonState = !m_lastPlayFromStartButtonState;
+		if(m_lastPlayFromStartButtonState == HIGH)
 		{
-			currentBeatCount = 0;
-			currentPulseCount = 0;
+			m_currentBeatCount = 0;
+			m_currentPulseCount = 0;
 			Timer1.restart();
 			Timer1.resume();
 			Serial.println("restart!");
@@ -250,20 +250,20 @@ void readClockPlayButtons()
 
 void readEncoder()
 {
-	long newEncoderPosition = encoder.read();
+	long newEncoderPosition = m_encoder.read();
 
-	if(newEncoderPosition != previousEncoderPosition)
+	if(newEncoderPosition != m_previousEncoderPosition)
 	{
-		previousEncoderPosition = newEncoderPosition;
+		m_previousEncoderPosition = newEncoderPosition;
 
 		// between the detents in the knob, there are 4 encoder signals sent.
 		// i only want to adjust bpm once the knob is settled into a detent,
 		// so divide by 4.
 		long newEncoderDivided = newEncoderPosition / 4;
-		if(newEncoderDivided != previousEncoderDivided)
+		if(newEncoderDivided != m_previousEncoderDivided)
 		{
-			bpm += newEncoderDivided > previousEncoderDivided ? 1 : -1;
-			previousEncoderDivided = newEncoderDivided;
+			m_bpm += newEncoderDivided > m_previousEncoderDivided ? 1 : -1;
+			m_previousEncoderDivided = newEncoderDivided;
 			updateTimer();
 		}
 	}
@@ -272,35 +272,35 @@ void readEncoder()
 void drawOLED()
 {
 	// setup OLED
-	oled.clear(PAGE);  // is this necessary?
-	oled.setCursor(0, 0);
+	m_oled.clear(PAGE);  // is this necessary?
+	m_oled.setCursor(0, 0);
 
 	// display bpm
-	oled.setFontType(2);
-	oled.println(bpm);
+	m_oled.setFontType(2);
+	m_oled.println(m_bpm);
 
 	// display current beat HUD
-	oled.setFontType(1);
-	switch(currentBeatCount % BEATS_PER_MEASURE)
+	m_oled.setFontType(1);
+	switch(m_currentBeatCount % BEATS_PER_MEASURE)
 	{
 		case 0:
-		  oled.println("  0xxx");
+		  m_oled.println("  0xxx");
 		  break;
 
 		case 1:
-		  oled.println("  x0xx");
+		  m_oled.println("  x0xx");
 		  break;
 
 		case 2:
-		  oled.println("  xx0x");
+		  m_oled.println("  xx0x");
 		  break;
 		  
 		case 3:
-		  oled.println("  xxx0");
+		  m_oled.println("  xxx0");
 		  break;
 	}
 
-	oled.display();
+	m_oled.display();
 }
 
 void loop()
