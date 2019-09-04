@@ -48,8 +48,8 @@ Encoder m_encoder(PIN_ENCODER_1, PIN_ENCODER_2);
 // SPI declaration
 MicroOLED m_oled(PIN_RESET, PIN_DC, PIN_CS);
 
-Bounce m_mainPlayButtonBouncer =		Bounce(PIN_MAIN_PLAY_BUTTON,		BUTTON_BOUNCE_TIME_MS);
-Bounce m_playFromStartButtonBouncer = Bounce(PIN_PLAY_FROM_START_BUTTON,	BUTTON_BOUNCE_TIME_MS);
+Bounce m_mainPlayButtonBouncer =	Bounce(PIN_MAIN_PLAY_BUTTON,		BUTTON_BOUNCE_TIME_MS);
+Bounce m_stopButtonBouncer =		Bounce(PIN_PLAY_FROM_START_BUTTON,	BUTTON_BOUNCE_TIME_MS);
 Bounce m_clock1PlayButtonBouncer =	Bounce(PIN_CLOCK_1_PLAY_BUTTON,		BUTTON_BOUNCE_TIME_MS);
 Bounce m_clock2PlayButtonBouncer =	Bounce(PIN_CLOCK_2_PLAY_BUTTON,		BUTTON_BOUNCE_TIME_MS);
 
@@ -59,7 +59,7 @@ double m_bpm = 132.0;
 volatile long m_currentPulseCount = 0;
 volatile long m_currentBeatCount = 0;
 bool m_lastMainPlayButtonState = LOW;
-bool m_lastPlayFromStartButtonState = LOW;
+bool m_lastStopButtonState = LOW;
 bool m_isClockInitialized = false;
 bool m_isMainClockPlaying = false;
 int m_beatsPerBar = 4;
@@ -124,18 +124,12 @@ void updateTimer()
 void timerCallback()
 {
 	noInterrupts();
+	
+	bool isStartOfNewBar = m_currentPulseCount % m_pulsesPerBar == 0;
 
 	for (int i = 0; i < NUM_CLOCK_OUTPUTS; i++)
 	{
-		m_clockSerials[i]->write(CLOCK_STATUS_BYTE);
-	}
-
-	m_currentPulseCount++;
-	m_currentBeatCount = m_currentPulseCount / 24;
-
-	if (m_currentPulseCount % m_pulsesPerBar == 0)  // the start of a new bar
-	{
-		for (int i = 0; i < NUM_CLOCK_OUTPUTS; i++)
+		if (isStartOfNewBar)
 		{
 			if (m_shouldClockStartNextBar[i] && !m_isClockPlaying[i])
 			{
@@ -145,20 +139,12 @@ void timerCallback()
 				digitalWrite(k_clockPlayButtonLedPins[i], HIGH);
 			}
 		}
+		m_clockSerials[i]->write(CLOCK_STATUS_BYTE);
 	}
-	else
-	{
-		//update clock play buttons that are waiting for next bar to start
-		const int ppqInThisBeat = m_currentPulseCount % PPQ;
-		bool isLedOn = ppqInThisBeat % (PPQ) == 0;
-		for (int i = 0; i < NUM_CLOCK_OUTPUTS; i++)
-		{
-			if (m_shouldClockStartNextBar[i] && !m_isClockPlaying[i])
-			{
-				digitalWrite(k_clockPlayButtonLedPins[i], isLedOn);
-			}
-		}
-	}
+
+	m_currentPulseCount++;
+	m_currentBeatCount = m_currentPulseCount / 24;
+
 
 	interrupts();
 }
@@ -172,47 +158,61 @@ void readMainPlayButton()
 		m_lastMainPlayButtonState = !m_lastMainPlayButtonState;
 		if(m_lastMainPlayButtonState == HIGH)
 		{
-			m_isMainClockPlaying = !m_isMainClockPlaying;
-	  
-			digitalWrite(PIN_MAIN_PLAY_LED, m_isMainClockPlaying);
+			m_currentBeatCount = 0;
+			m_currentPulseCount = 0;
 
 			if(m_isMainClockPlaying)
 			{
-				Timer1.start();
 				for (int i = 0; i < NUM_CLOCK_OUTPUTS; i++)
 				{
-					if (m_isClockPlaying[i])
+					if (m_isClockPlaying[i] || m_shouldClockStartNextBar[i])
 					{
 						m_clockSerials[i]->write(START_STATUS_BYTE);
 					}
 				}
+				Timer1.restart();
 			}
 			else
 			{
-				Timer1.stop();
+				Timer1.start();
+				m_isMainClockPlaying = true;
+				digitalWrite(PIN_MAIN_PLAY_LED, HIGH);
+
 				for (int i = 0; i < NUM_CLOCK_OUTPUTS; i++)
 				{
-					m_clockSerials[i]->write(STOP_STATUS_BYTE);
+					if (m_isClockPlaying[i] || m_shouldClockStartNextBar[i])
+					{
+						//m_clockSerials[i]->write(START_STATUS_BYTE);
+					}
 				}
 			}
 		}
 	} 
 }
 
-void readPlayFromStartButton()
+void readStopButton()
 {
-	m_playFromStartButtonBouncer.update();
+	m_stopButtonBouncer.update();
 
-	if(m_playFromStartButtonBouncer.read() != m_lastPlayFromStartButtonState)
+	if(m_stopButtonBouncer.read() != m_lastStopButtonState)
 	{
-		m_lastPlayFromStartButtonState = !m_lastPlayFromStartButtonState;
-		if(m_lastPlayFromStartButtonState == HIGH)
+		m_lastStopButtonState = !m_lastStopButtonState;
+		if(m_lastStopButtonState == HIGH)
 		{
+			Timer1.stop();
 			m_currentBeatCount = 0;
 			m_currentPulseCount = 0;
-			Timer1.restart();
-			Timer1.resume();
-			Serial.println("restart!");
+			m_isMainClockPlaying = false;
+			digitalWrite(PIN_MAIN_PLAY_LED, LOW);
+
+			for (int i = 0; i < NUM_CLOCK_OUTPUTS; i++)
+			{
+				m_clockSerials[i]->write(STOP_STATUS_BYTE);
+				m_shouldClockStartNextBar[i] = m_isClockPlaying[i];
+				m_isClockPlaying[i] = false;
+			}
+
+			Serial.println("stop!");
 		}
 	}
 }
@@ -300,11 +300,37 @@ void drawOLED()
 	m_oled.display();
 }
 
+void updateClockButtonLeds()
+{
+	if (m_isMainClockPlaying)
+	{
+		//update clock play buttons that are waiting for next bar to start
+		const int ppqInThisBeat = m_currentPulseCount % PPQ;
+		bool isLedOn = ppqInThisBeat % PPQ == 0;
+		for (int i = 0; i < NUM_CLOCK_OUTPUTS; i++)
+		{
+			if (m_shouldClockStartNextBar[i] && !m_isClockPlaying[i])
+			{
+				digitalWrite(k_clockPlayButtonLedPins[i], isLedOn);
+			}
+		}
+	}
+	else
+	{
+		for (int i = 0; i < NUM_CLOCK_OUTPUTS; i++)
+		{
+			digitalWrite(k_clockPlayButtonLedPins[i], m_isClockPlaying[i] || m_shouldClockStartNextBar[i]);
+		}
+	}
+}
+
+
 void loop()
 {
 	readMainPlayButton();
-	readPlayFromStartButton();
+	readStopButton();
 	readClockPlayButtons();
 	readEncoder();
+	updateClockButtonLeds();
 	drawOLED();
 }
